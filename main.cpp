@@ -14,6 +14,12 @@ using namespace DirectX;
 #include <d3dcompiler.h>
 #pragma comment(lib, "d3dcompiler.lib")
 
+#define DIRECTINPUT_VERSION 0x0800
+#include <dinput.h>
+
+#pragma comment(lib, "dinput8.lib")
+#pragma comment(lib, "dxguid.lib")
+
 // ウィンドウプロシージャ
 LRESULT WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	// メッセージに応じてゲーム固有の処理を行う
@@ -205,6 +211,24 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	ID3D12Fence* fence = nullptr;
 	UINT64 fenceVal = 0;
 	result = device->CreateFence(fenceVal, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
+
+	// DirectInputの初期化
+	IDirectInput8* directInput = nullptr;
+	result = DirectInput8Create(w.hInstance, DIRECTINPUT_VERSION, IID_IDirectInput8, (void**)&directInput, nullptr);
+	assert(SUCCEEDED(result));
+
+	// キーボードデバイスの生成
+	IDirectInputDevice8* keyboard = nullptr;
+	result = directInput->CreateDevice(GUID_SysKeyboard, &keyboard, NULL);
+	assert(SUCCEEDED(result));
+
+	// 入力データ形式のセット
+	result = keyboard->SetDataFormat(&c_dfDIKeyboard);
+	assert(SUCCEEDED(result));
+
+	// 排他制御レベルのセット
+	result = keyboard->SetCooperativeLevel(hwnd, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
+	assert(SUCCEEDED(result));
 
 	// DirectX初期化処理 ここまで
 #pragma endregion DirectX初期化処理
@@ -401,6 +425,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 #pragma region DirectX毎フレーム処理
 		// DirectX毎フレーム処理 ここから
 
+		// キーボード情報の取得開始
+		keyboard->Acquire();
+
+		// 全キーの入力状態を取得する
+		BYTE key[256] = {};
+		keyboard->GetDeviceState(sizeof(key), key);
+
+		// 数字の0キーが押されていたら
+		if (key[DIK_0]) {
+			OutputDebugStringA("Hit 0\n");
+		}
+
 		// バックバッファの番号を取得(2つなので0番か1番)
 		UINT bbIndex = swapChain->GetCurrentBackBufferIndex();
 		// 1.リソースバリアで書き込み可能に変更
@@ -418,6 +454,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 		// 3.画面クリア R G B A
 		FLOAT clearColor[] = { 0.1f,0.25f, 0.5f,0.0f }; // { R, G, B, A } 青っぽい色
+
+		// 色を変える
+		if (key[DIK_SPACE]) {
+			clearColor[1] = { 1.0f };
+		}
+
 		commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
 
 #pragma region 描画コマンド
@@ -427,8 +469,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 		// ビューポート設定コマンド
 		D3D12_VIEWPORT viewport{};
-		viewport.Width = window_width;
-		viewport.Height = window_height;
+		viewport.Width = window_width / 2;
+		viewport.Height = window_height / 2;
 		viewport.TopLeftX = 0;
 		viewport.TopLeftY = 0;
 		viewport.MinDepth = 0.0f;
@@ -458,6 +500,106 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 		// 描画コマンド
 		commandList->DrawInstanced(_countof(vertices), 1, 0, 0); // 全ての頂点を使って描画
 
+		//課題用
+		// ビューポート設定コマンド
+		D3D12_VIEWPORT viewport2{};
+		viewport2.Width = window_width / 2;
+		viewport2.Height = window_height / 2;
+		viewport2.TopLeftX = window_width / 2;
+		viewport2.TopLeftY = window_height / 2;
+		viewport2.MinDepth = 0.0f;
+		viewport2.MaxDepth = 1.0f;
+		// ビューポート設定コマンドを、コマンドリストに積む
+		commandList->RSSetViewports(1, &viewport2);
+
+		// シザー矩形
+		D3D12_RECT scissorRect2{};
+		scissorRect2.left = 0; // 切り抜き座標左
+		scissorRect2.right = scissorRect2.left + window_width; // 切り抜き座標右
+		scissorRect2.top = 0; // 切り抜き座標上
+		scissorRect2.bottom = scissorRect2.top + window_height; // 切り抜き座標下
+		// シザー矩形設定コマンドを、コマンドリストに積む
+		commandList->RSSetScissorRects(1, &scissorRect2);
+
+		// パイプラインステートとルートシグネチャの設定コマンド
+		commandList->SetPipelineState(pipelineState);
+		commandList->SetGraphicsRootSignature(rootSignature);
+
+		// プリミティブ形状の設定コマンド
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // 三角形リスト
+
+		// 頂点バッファビューの設定コマンド
+		commandList->IASetVertexBuffers(0, 1, &vbView);
+
+		// 描画コマンド
+		commandList->DrawInstanced(_countof(vertices), 1, 0, 0); // 全ての頂点を使って描画
+
+		
+		// ビューポート設定コマンド
+		D3D12_VIEWPORT viewport3{};
+		viewport3.Width = window_width / 2;
+		viewport3.Height = window_height / 2;
+		viewport3.TopLeftX = window_width / 2;
+		viewport3.TopLeftY = 0;
+		viewport3.MinDepth = 0.0f;
+		viewport3.MaxDepth = 1.0f;
+		// ビューポート設定コマンドを、コマンドリストに積む
+		commandList->RSSetViewports(1, &viewport3);
+
+		// シザー矩形
+		D3D12_RECT scissorRect3{};
+		scissorRect3.left = 0; // 切り抜き座標左
+		scissorRect3.right = scissorRect3.left + window_width; // 切り抜き座標右
+		scissorRect3.top = 0; // 切り抜き座標上
+		scissorRect3.bottom = scissorRect3.top + window_height; // 切り抜き座標下
+		// シザー矩形設定コマンドを、コマンドリストに積む
+		commandList->RSSetScissorRects(1, &scissorRect3);
+
+		// パイプラインステートとルートシグネチャの設定コマンド
+		commandList->SetPipelineState(pipelineState);
+		commandList->SetGraphicsRootSignature(rootSignature);
+
+		// プリミティブ形状の設定コマンド
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // 三角形リスト
+
+		// 頂点バッファビューの設定コマンド
+		commandList->IASetVertexBuffers(0, 1, &vbView);
+
+		// 描画コマンド
+		commandList->DrawInstanced(_countof(vertices), 1, 0, 0); // 全ての頂点を使って描画
+
+		// ビューポート設定コマンド
+		D3D12_VIEWPORT viewport4{};
+		viewport4.Width = window_width / 2;
+		viewport4.Height = window_height / 2;
+		viewport4.TopLeftX = 0;
+		viewport4.TopLeftY = window_height / 2;
+		viewport4.MinDepth = 0.0f;
+		viewport4.MaxDepth = 1.0f;
+		// ビューポート設定コマンドを、コマンドリストに積む
+		commandList->RSSetViewports(1, &viewport4);
+
+		// シザー矩形
+		D3D12_RECT scissorRect4{};
+		scissorRect4.left = 0; // 切り抜き座標左
+		scissorRect4.right = scissorRect4.left + window_width; // 切り抜き座標右
+		scissorRect4.top = 0; // 切り抜き座標上
+		scissorRect4.bottom = scissorRect4.top + window_height; // 切り抜き座標下
+		// シザー矩形設定コマンドを、コマンドリストに積む
+		commandList->RSSetScissorRects(1, &scissorRect4);
+
+		// パイプラインステートとルートシグネチャの設定コマンド
+		commandList->SetPipelineState(pipelineState);
+		commandList->SetGraphicsRootSignature(rootSignature);
+
+		// プリミティブ形状の設定コマンド
+		commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST); // 三角形リスト
+
+		// 頂点バッファビューの設定コマンド
+		commandList->IASetVertexBuffers(0, 1, &vbView);
+
+		// 描画コマンド
+		commandList->DrawInstanced(_countof(vertices), 1, 0, 0); // 全ての頂点を使って描画
 
 
 #pragma endregion グラフィックスコマンド
