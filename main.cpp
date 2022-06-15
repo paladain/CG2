@@ -11,6 +11,12 @@
 #include <DirectXMath.h>
 using namespace DirectX;
 
+#define DIRECTINPUT_VERSION     0x0800   // DirectInputのバージョン指定
+#include <dinput.h>
+
+#pragma comment(lib, "dinput8.lib")
+#pragma comment(lib, "dxguid.lib")
+
 #include <d3dcompiler.h>
 #pragma comment(lib, "d3dcompiler.lib")
 
@@ -208,6 +214,26 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	UINT64 fenceVal = 0;
 	result = device->CreateFence(fenceVal, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence));
 
+	// DirectInputの初期化
+	IDirectInput8* directInput = nullptr;
+	result = DirectInput8Create(
+		w.hInstance, DIRECTINPUT_VERSION, IID_IDirectInput8, (void**)&directInput, nullptr);
+	assert(SUCCEEDED(result));
+
+	// キーボードデバイスの生成
+	IDirectInputDevice8* keyboard = nullptr;
+	result = directInput->CreateDevice(GUID_SysKeyboard, &keyboard, NULL);
+	assert(SUCCEEDED(result));
+
+	// 入力データ形式のセット
+	result = keyboard->SetDataFormat(&c_dfDIKeyboard); // 標準形式
+	assert(SUCCEEDED(result));
+
+	// 排他制御レベルのセット
+	result = keyboard->SetCooperativeLevel(
+		hwnd, DISCL_FOREGROUND | DISCL_NONEXCLUSIVE | DISCL_NOWINKEY);
+	assert(SUCCEEDED(result));
+
 	// DirectX初期化処理 ここまで
 #pragma endregion DirectX初期化処理
 
@@ -222,10 +248,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	// 頂点データ
 	Vertex vertices[] = {
 		// x      y     z       u     v
-		{{0.0f, 100.0f, 0.0f}, {0.0f, 1.0f}}, // 左下
-		{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f}}, // 左上
-		{{100.0f, 100.0f, 0.0f}, {1.0f, 1.0f}}, // 右下
-		{{100.0f, 0.0f, 0.0f}, {1.0f, 0.0f}}, // 右上
+		{{-50.0f, -50.0f, 0.0f}, {0.0f, 1.0f}}, // 左下
+		{{-50.0f,  50.0f, 0.0f}, {0.0f, 0.0f}}, // 左上
+		{{ 50.0f, -50.0f, 0.0f}, {1.0f, 1.0f}}, // 右下
+		{{ 50.0f,  50.0f, 0.0f}, {1.0f, 0.0f}}, // 右上
 	};
 
 	// 頂点データ全体のサイズ = 頂点データ一つ分のサイズ * 頂点データの要素数
@@ -538,11 +564,36 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	}
 
 	// 単位行列を代入
-	constMapTransform->mat = XMMatrixIdentity();
-	constMapTransform->mat.r[0].m128_f32[0] = 2.0f / window_width;
-	constMapTransform->mat.r[1].m128_f32[1] = -2.0f / window_height;
-	constMapTransform->mat.r[3].m128_f32[0] = -1.0f;
-	constMapTransform->mat.r[3].m128_f32[1] = 1.0f;
+	//constMapTransform->mat = XMMatrixIdentity();
+	//constMapTransform->mat.r[0].m128_f32[0] = 2.0f / window_width;
+	//constMapTransform->mat.r[1].m128_f32[1] = -2.0f / window_height;
+	//constMapTransform->mat.r[3].m128_f32[0] = -1.0f;
+	//constMapTransform->mat.r[3].m128_f32[1] = 1.0f;
+
+	// 平行投影行列の計算
+	constMapTransform->mat = XMMatrixOrthographicOffCenterLH(
+		0, window_width, window_height, 0, 0, 1
+	);
+
+	// 透視投影行列の計算
+	XMMATRIX matProjection = XMMatrixPerspectiveFovLH(
+		XMConvertToRadians(45.0f),           // 上下画角45度
+		(float)window_width / window_height, // アスペクト比 (画面横幅 / 画面縦幅)
+		0.1f, 1000.0f                        // 前端、奥端
+	);
+
+	// 次回、ここでビュー変換行列(透視投影)を計算
+	XMMATRIX matView;
+	XMFLOAT3 eye(0, 0, -100);
+	XMFLOAT3 target(0, 0, 0);
+	XMFLOAT3 up(0, 1, 0);
+	matView = XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&target), XMLoadFloat3(&up));
+
+	// 初期化
+	float angle = 0.0f; // カメラの回転角
+	XMFLOAT3 scale = { 1.0f, 1.0f, 1.0f };    // スケーリング倍率
+	XMFLOAT3 rocation = { 0.0f, 0.0f, 0.0f }; // 回転角
+	XMFLOAT3 position = { 0.0f, 0.0f, 0.0f }; // 座標
 
 	// インデックスデータ
 	unsigned short indices[] = {
@@ -758,7 +809,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	//ゲームループ
 	while (true) {
 
-
 #pragma region ウィンドウメッセージ処理
 		// メッセージがある？
 		if (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
@@ -774,6 +824,70 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 
 #pragma region DirectX毎フレーム処理
 		// DirectX毎フレーム処理 ここから
+
+		// キーボード情報の取得開始
+		keyboard->Acquire();
+
+
+		// 全キーの入力状態を取得する
+		BYTE key[256] = {};
+		BYTE oldkey[256] = {};
+		for (int i = 0; i < 256; i++) {
+			oldkey[i] = key[i];
+		}
+		keyboard->GetDeviceState(sizeof(key), key);
+
+		//bool holdkey(uint8_t i);
+		//bool applykey(uint8_t i);
+		//bool pushkey(uint8_t i);
+		//bool releasekey(uint8_t i);
+
+		// キーボードの処理
+
+		if (key[DIK_D] || key[DIK_A]) {
+			if (key[DIK_D]) { angle += XMConvertToRadians(1.0f); }
+			else if (key[DIK_A]) { angle -= XMConvertToRadians(1.0f); }
+
+			// angleラジアンだけy軸周りに回転。半径は-100
+			eye.x = -100 * sinf(angle);
+			eye.z = -100 * cosf(angle);
+			matView = XMMatrixLookAtLH(XMLoadFloat3(&eye), XMLoadFloat3(&target), XMLoadFloat3(&up));
+		}
+
+		if (key[DIK_UP] || key[DIK_DOWN] || key[DIK_RIGHT] || key[DIK_LEFT]) {
+			if (key[DIK_UP]) { position.z += 1.0f; }
+			else if (key[DIK_DOWN]) { position.z -= 1.0f; }
+			if (key[DIK_RIGHT]) { position.x += 1.0f; }
+			else if (key[DIK_LEFT]) { position.x -= 1.0f; }
+		}
+
+		// ワールド変換行列
+		XMMATRIX matWorld;
+		matWorld = XMMatrixIdentity();
+
+		XMMATRIX matScale; // スケーリング行列
+		matScale = XMMatrixScaling(scale.x, scale.y, scale.z);
+		matWorld *= matScale; // ワールド行列にスケーリングを反映
+
+		// XMMATRIX matRot; // 回転行列 (2D)
+		// matRot = XMMatrixIdentity();
+		// matRot *= XMMatrixRotationZ(XMConvertToRadians(45.0f)); // Z軸まわりに45度回転
+
+		XMMATRIX matRot; // 回転行列 (3D)
+		matRot = XMMatrixIdentity();
+		matRot *= XMMatrixRotationZ(XMConvertToRadians(rocation.z));  // Z軸周りに0度回転してから
+		matRot *= XMMatrixRotationX(XMConvertToRadians(rocation.x)); // X軸周りに15度回転してから
+		matRot *= XMMatrixRotationY(XMConvertToRadians(rocation.y)); // Y軸周りに30度回転
+		matWorld *= matRot; // ワールド行列に回転を反映
+
+		XMMATRIX matTrans; // 平行移動行列
+		matTrans = XMMatrixTranslation(position.x, position.y, position.z); // (-50,0,0)平行移動
+		matWorld *= matTrans; // ワールド行列に平行移動を反映
+
+		// 定数バッファに転送
+		constMapTransform->mat = matWorld * matView * matProjection;
+
+		//キーボード処理ここまで
 
 		// バックバッファの番号を取得(2つなので0番か1番)
 		UINT bbIndex = swapChain->GetCurrentBackBufferIndex();
